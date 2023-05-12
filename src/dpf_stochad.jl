@@ -12,7 +12,32 @@ using UnPack
     prior
     state_model
     obs_model
+    prop_model
 end
+
+#==
+note that using distributions is often slower than we would like. therefore it if typically advantageous to define a custom struct for state_model, obs_model, and prop_model, and then extend Distributions.pdf and Base.rand to each.
+
+for example:
+
+struct MVNR
+    μ
+    Σ
+end
+
+function Distributions.pdf(d::MVNR, x)
+    k = length(μ)
+    return 2π^(-k/2) * det(d.Σ) ^ -0.5 * exp(-0.5 * (x - d.μ)' * inv(d.Σ) * (x - d.μ))
+end
+
+function Base.rand(d::MVNR)
+    k = length(μ)
+    return d.μ + sqrt(d.Σ) * randn(k)
+end
+
+these functions and structs can be optimised, for example if Σ is fixed then multiple values could be precomputed in the struct
+however, in the MvNormal case it is typically better to use Distributions unless Σ or μ are fixed and known
+==#
 
 @proto struct ParticleFilter
     K::Integer
@@ -67,9 +92,9 @@ function resample(X, w, sample_strategy, _unw = true)
     return X_n, w_n
 end
 
-function (F::ParticleFilter)(θ; _store = false, _unw = true, s = 1)
+function (F::ParticleFilter)(θ; _store = false, _unw = true, s = 1, _bpf = true)
     @unpack K, SSM, obs, sample_strat = F
-    @unpack T, prior, state_model, obs_model = SSM
+    @unpack T, prior, state_model, obs_model, prop_model = SSM
 
     X = [rand(prior(θ)) for k in 1:K]
     w = [inv(K) for k in 1:K]
@@ -96,6 +121,46 @@ function (F::ParticleFilter)(θ; _store = false, _unw = true, s = 1)
                 Zygote.ignore(() -> push!(Xs, X))
             end
         end
+    end
+    #if store return path, else return last state, always return weights
+    return (_store ? Xs : X), w
+end
+
+function (F::ParticleFilter)(θ; _store = false, _unw = true, s = 1, _bpf = false)
+    @unpack K, SSM, obs, sample_strat = F
+    @unpack T, prior, state_model, obs_model, prop_model = SSM
+
+    X = [rand(prior(θ)) for k in 1:K]
+    w = [inv(K) for k in 1:K]
+    ω = 1.
+
+    if _store
+        Xs = [X]
+    end
+
+    for (t, y) in zip(1:T, obs)
+        if t < T
+            X_new = map(X -> rand(prop_model(x, y, θ)), X)
+        end
+
+        # w_o = map(x -> pdf(obs_model(x, θ), y), X)
+        t1 = map(x -> pdf(obs_model(x, θ), y), X)
+        t2 = map((x, x_new) -> pdf(state_model(x, θ), x_new), X, X_new)
+        t3 = map((x, x_new) -> pdf(prop_model(x, y, θ), x_new), X, X_new)
+        w = w .* w_o
+        ω_o = ω
+        ω = sum(w)
+
+        X = X_new
+
+        if 1 < t < T && (t % s == 0) #perform resampling every s steps (placeholder)
+            X, w = resample(X, w, sample_strategy, _unw)
+        end
+        if _store
+            Zygote.ignore(() -> push!(Xs, X))
+        end
+
+
     end
     #if store return path, else return last state, always return weights
     return (_store ? Xs : X), w

@@ -1,7 +1,12 @@
 using LinearAlgebra
 using Zygote
+using ForwardDiff
 using Distributions
 using ProtoStructs
+using DistributionsAD
+using BenchmarkTools
+using FiniteDiff
+using StaticArrays
 
 function f(a, b)
     m = Normal(a,b)
@@ -61,3 +66,39 @@ function talloc(x, y)
 end
 
 tf_g = withgradient(talloc, [1., 2., 3.], 1.0)
+
+tf_comp(x) = sum(x[1:50].^2 ./ sqrt.(x[51:100]))
+
+txs, tys = randn(50), rand(50)
+
+ForwardDiff.gradient(tf_comp, vcat(txs, tys))
+Zygote.gradient(tf_comp, vcat(txs, tys))
+@btime ForwardDiff.gradient(tf_comp, vcat(txs, tys))
+@btime Zygote.gradient(tf_comp, vcat(txs, tys))
+@btime FiniteDiff.finite_difference_gradient(tf_comp, vcat(txs, tys))
+
+npdf(mu, sig, x) = inv(sig * sqrt(2π)) * exp(-0.5 * ((x - mu)/sig)^2)
+
+function testcles(x)
+    N = length(x)
+    X = collect(1:N) .* x ./ 4
+    X2 = abs.(X .+ 0.1)
+    X = X .+ X2
+    # X = map((x, y) -> npdf(x, 1, y), X, X2)
+    X = map((x, y) -> pdf(MvNormal([x, x], [1. 0.; 0. 1.]), [y, y]), X, X2)
+    return sum(X)
+end
+
+testcles(collect(-2:3))
+
+fwd = ForwardDiff.gradient(testcles, collect(-2:200))
+zgd = Zygote.gradient(testcles, collect(-2:200))[1]
+fid = FiniteDiff.finite_difference_gradient(testcles, 1. .* collect(-2:200))
+
+@btime ForwardDiff.gradient(testcles, collect(-2:200)) seconds = 1
+@btime Zygote.gradient(testcles, collect(-2:200)) seconds = 1
+@btime FiniteDiff.finite_difference_gradient(testcles, 1. .* collect(-2:200)) seconds = 1
+
+t1s = [ones(5) for i in 1:2]
+t2s = [rand(5) for i in 1:2]
+tv = map((i,j) -> i+j, t1s, t2s)
