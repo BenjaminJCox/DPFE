@@ -1,5 +1,6 @@
 using LinearAlgebra
 using Distributions
+using StatsBase
 
 abstract type PFTransitionModel end
 abstract type PFObservationModel end
@@ -11,6 +12,7 @@ abstract type PFProposal end
 all functions take the struct as first input
 define functions outside of structs and reuse, for example if using bootstrap proposal the proposal reuses the transition function
 I think (read: hope) structs only point to functions...
+recomment using structs containing parameters to construct functions, can then take gradients of filter outputs wrt parameter structs
 struct _example_t_model <: PFTransitionModel
     d::Integer #size of state
     f::Function #takes state, yields transition without noise term
@@ -27,7 +29,7 @@ end
 
 struct _example_r_scheme <: PFResamplingScheme
     criterion::Function #takes weights, tests criterion, returns true is resampling is to occur
-    perform::Function #takes states, weights, performs resampling and returns like states. 
+    perform::Function #takes states, weights, performs resampling and returns like states.
 end
 
 struct _example_proposal <: PFProposal
@@ -50,7 +52,7 @@ Distributions.pdf(m::PFObservationModel, state, observation) = exp.(m.ll(m, stat
 test(s::PFResamplingScheme, weights) = s.criterion(s, weights)
 resample(s::PFResamplingScheme, states, weights) = s.perform(s, states, weights)
 
-Base.rand(p::PFProposal, state, observation, prior::Bool) = p.prop(p, state, observation, prior)
+StatsBase.sample(p::PFProposal, state, observation, prior::Bool) = p.prop(p, state, observation, prior) #randomness must be external to flow
 Distributions.logpdf(p::PFProposal, sample, state, observation) = p.ll(p, sample, state, observation)
 Distributions.pdf(p::PFProposal, sample, state, observation) = exp.(p.ll(p, sample, state, observation))
 
@@ -61,13 +63,13 @@ function particle_filter(; transition_model, observation_model, proposal_method,
     T = size(observations, 2)
     N = n_particles
 
-    # Remember, no mutation, only reassignment
-    weights = zeros(n_particles, T + 1)
-    states = zeros(_state_dim, n_particles, T + 1)
+    # need to buffer these for zygote to work
+    weights = Zygote.Buffer([1.0], n_particles, T + 1)
+    states = Zygote.Buffer([1.0], _state_dim, n_particles, T + 1)
     lθ = 0.0
 
     for n = 1:N
-        states[:, n, 1] = rand(proposal_method, nothing, nothing, prior = true)
+        states[:, n, 1] = sample(proposal_method, nothing, nothing, prior = true)
         weights[n, 1] = inv(N)
     end
 
@@ -78,7 +80,7 @@ function particle_filter(; transition_model, observation_model, proposal_method,
         end
 
         for n = 1:N
-            states[:, n, t+1] = rand(proposal_method, states[:, n, t], observations[:, t])
+            states[:, n, t+1] = sample(proposal_method, states[:, n, t], observations[:, t])
             weights[n, t+1] = exp(
                 logpdf(transition_model, states[:, n, t], states[:, n, t+1]) +
                 logpdf(observation_model, states[:, n, t+1], observations[:, t]) -
