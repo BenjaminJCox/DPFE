@@ -90,6 +90,7 @@ function (F::ParticleFilter)(θ; _store = false, _unw = true, s = 1)
         end
 
         if t < T
+            # bootstrap pf, will update to use modular proposal
             X = map(x -> rand(state_model(x, θ)), X)
             if _store
                 Zygote.ignore(() -> push!(Xs, X))
