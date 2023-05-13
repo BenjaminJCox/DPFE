@@ -61,14 +61,14 @@ function generate_fake_trajectory(SSM::StateSpaceModel, θ)
     xs, ys
 end
 
-function strat_sample(w, K, sw = 1)
+function strat_sample(w, K, ω = 1)
     n = length(w)
     U = rand()
     is = zeros(Int, K)
     i = 1
     cw = w[1]
     for k in 1:K
-        t = sw * (k - 1 + U) / K
+        t = ω * (k - 1 + U) / K
         while cw < t && i < n
             i += 1
             cw += w[i]
@@ -79,6 +79,10 @@ function strat_sample(w, K, sw = 1)
 end
 
 function resample(X, w, sample_strategy, _unw = true)
+    #==
+    TODO: IMPLEMENT SINKHORN ALGORITHM FOR DET RESAMPLING (should not be all too difficult)
+    implement gradient stitching as well, should spped it up for freeeeeeee, but probably not needed
+    ==#
     N = size(X, 2)
     ω = sum(w)
     idx = Zygote.ignore(() -> sample_strategy(w, N, ω))
@@ -134,36 +138,45 @@ function (F::ParticleFilter)(θ; _store = false, _unw = true, s = 1, _bpf = fals
     w = [inv(K) for k in 1:K]
     ω = 1.
 
+    ll = 0.0
+
     if _store
         Xs = [X]
     end
 
     for (t, y) in zip(1:T, obs)
-        if t < T
-            X_new = map(X -> rand(prop_model(x, y, θ)), X)
+
+        # Normalise w_{t-1}
+        w = w ./ sum(w)
+
+        # Resample X_{t-1}
+        if (t % s == 0)
+            X, w = resample(X, w, sample_strategy, _unw)
         end
 
-        # w_o = map(x -> pdf(obs_model(x, θ), y), X)
+        # Sample X_{t}
+        X_new = map(X -> rand(prop_model(x, y, θ)), X)
+
+        # Compute w_{t}
         t1 = map(x -> pdf(obs_model(x, θ), y), X)
         t2 = map((x, x_new) -> pdf(state_model(x, θ), x_new), X, X_new)
         t3 = map((x, x_new) -> pdf(prop_model(x, y, θ), x_new), X, X_new)
-        w = w .* w_o
-        ω_o = ω
+        w = t1 .* t2 ./ t3
+
+        # Compute \hat{p}(y_{t}|y_{1:t-1})
         ω = sum(w)
 
         X = X_new
-
-        if 1 < t < T && (t % s == 0) #perform resampling every s steps (placeholder)
-            X, w = resample(X, w, sample_strategy, _unw)
-        end
         if _store
             Zygote.ignore(() -> push!(Xs, X))
         end
 
-
+        # Accumulate \hat{l}(\theta)
+        # Is technically log(sum(w_t-1 * w_t)), but w_t-1 is now uniform and normalised
+        ll = ll + log(inv(K) * ω)
     end
     #if store return path, else return last state, always return weights
-    return (_store ? Xs : X), w
+    return (_store ? Xs : X), w, ll
 end
 
 function log_likelihood(F::ParticleFilter, θ, _unw = true, s = 1)
