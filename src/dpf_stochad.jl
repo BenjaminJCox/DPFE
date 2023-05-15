@@ -2,6 +2,8 @@ using StochasticAD
 using Statistics
 using StatsBase
 using Zygote
+using ForwardDiff
+using FiniteDiff
 using Distributions
 using DistributionsAD
 using ProtoStructs
@@ -86,10 +88,11 @@ function resample(K, X, w, sample_strategy, _unw = true)
     ==#
     # N = size(X, 2)
     ω = sum(w)
-    idx = ChainRulesCore.ignore_derivatives(() -> sample_strategy(w, K, ω)) 
+    idx = ChainRulesCore.ignore_derivatives(() -> sample_strategy(w, K, ω))
     X_n = X[idx]
     if _unw
         w_c = w[idx]
+        # new_weight is the important function here, allows us to propagate gradients through resampling
         w_n = map(w -> ω .* new_weight(w ./ ω) ./ K, w_c)
     else
         w_new = fill(ω / K, K)
@@ -154,6 +157,7 @@ function (F::ParticleFilter)(θ; _store = false, _unw = true, s = 1, _bpf = fals
         w = w ./ sum(w)
 
         # Resample X_{t-1}
+        # this implicitly sets w to 1/K
         if (t % s == 0)
             X, w = resample(K, X, w, sample_strat, _unw)
         end
@@ -190,11 +194,19 @@ function (F::ParticleFilter)(θ; _store = false, _unw = true, s = 1, _bpf = fals
     end
 end
 
-function log_likelihood(F::ParticleFilter, θ, _unw = true, s = 1, _bpf = false)
+function log_likelihood(F::ParticleFilter, θ; _unw = true, s = 1, _bpf = false)
     _, _, ll = F(θ, _store = false, _unw = _unw, s = s, _bpf = _bpf)
     return ll
 end
 
 function ll_grad(θ, F::ParticleFilter; s = 1, _bpf = false)
     Zygote.gradient(θ -> log_likelihood(F, θ, true, s, _bpf), θ)[1]
+end
+
+function ll_grad_fwd(θ, F::ParticleFilter; s = 1, _bpf = false)
+    ForwardDiff.gradient(θ -> log_likelihood(F, θ, true, s, _bpf), θ)
+end
+
+function ll_grad_fd(θ, F::ParticleFilter; s = 1, _bpf = false)
+    FiniteDiff.finite_difference_gradient(θ -> log_likelihood(F, θ, true, s, _bpf), θ)
 end
