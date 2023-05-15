@@ -6,6 +6,7 @@ using Distributions
 using DistributionsAD
 using ProtoStructs
 using UnPack
+using ChainRulesCore
 
 @proto struct StateSpaceModel
     T::Integer
@@ -78,20 +79,20 @@ function strat_sample(w, K, ω = 1)
     return is
 end
 
-function resample(X, w, sample_strategy, _unw = true)
+function resample(K, X, w, sample_strategy, _unw = true)
     #==
     TODO: IMPLEMENT SINKHORN ALGORITHM FOR DET RESAMPLING (should not be all too difficult)
     implement gradient stitching as well, should spped it up for freeeeeeee, but probably not needed
     ==#
-    N = size(X, 2)
+    # N = size(X, 2)
     ω = sum(w)
-    idx = Zygote.ignore(() -> sample_strategy(w, N, ω))
+    idx = ChainRulesCore.ignore_derivatives(() -> sample_strategy(w, K, ω)) 
     X_n = X[idx]
-    if unw
+    if _unw
         w_c = w[idx]
-        w_n = map(w -> ω .* new_weight(w ./ ω) ./ N, w_c)
+        w_n = map(w -> ω .* new_weight(w ./ ω) ./ K, w_c)
     else
-        w_new = fill(ω / N, N)
+        w_new = fill(ω / K, K)
     end
     return X_n, w_n
 end
@@ -115,14 +116,16 @@ function (F::ParticleFilter)(θ; _store = false, _unw = true, s = 1, _bpf = true
         ω = sum(w)
 
         if 1 < t < T && (t % s == 0) #perform resampling every s steps (placeholder)
-            X, w = resample(X, w, sample_strategy, _unw)
+            X, w = resample(K, X, w, sample_strat, _unw)
         end
 
         if t < T
             # bootstrap pf, will update to use modular proposal
             X = map(x -> rand(state_model(x, θ)), X)
             if _store
-                Zygote.ignore(() -> push!(Xs, X))
+                ChainRulesCore.ignore_derivatives() do
+                    push!(Xs, X)
+                end
             end
         end
     end
@@ -142,6 +145,7 @@ function (F::ParticleFilter)(θ; _store = false, _unw = true, s = 1, _bpf = fals
 
     if _store
         Xs = [X]
+        Ws = [w]
     end
 
     for (t, y) in zip(1:T, obs)
@@ -151,11 +155,11 @@ function (F::ParticleFilter)(θ; _store = false, _unw = true, s = 1, _bpf = fals
 
         # Resample X_{t-1}
         if (t % s == 0)
-            X, w = resample(X, w, sample_strategy, _unw)
+            X, w = resample(K, X, w, sample_strat, _unw)
         end
 
         # Sample X_{t}
-        X_new = map(X -> rand(prop_model(x, y, θ)), X)
+        X_new = map(x -> rand(prop_model(x, y, θ)), X)
 
         # Compute w_{t}
         t1 = map(x -> pdf(obs_model(x, θ), y), X)
@@ -168,22 +172,29 @@ function (F::ParticleFilter)(θ; _store = false, _unw = true, s = 1, _bpf = fals
 
         X = X_new
         if _store
-            Zygote.ignore(() -> push!(Xs, X))
+            ChainRulesCore.ignore_derivatives() do
+                push!(Xs, X)
+                push!(Ws, w)
+            end
         end
 
         # Accumulate \hat{l}(\theta)
         # Is technically log(sum(w_t-1 * w_t)), but w_t-1 is now uniform and normalised
-        ll = ll + log(inv(K) * ω)
+        ll = ll + log(ω)
     end
     #if store return path, else return last state, always return weights
-    return (_store ? Xs : X), w, ll
+    if _store
+        return Xs, Ws, ll
+    else
+        return X, w, ll
+    end
 end
 
-function log_likelihood(F::ParticleFilter, θ, _unw = true, s = 1)
-    _, w = F(θ, _store = false, _unw = _unw, s = s)
-    return log(sum(W))
+function log_likelihood(F::ParticleFilter, θ, _unw = true, s = 1, _bpf = false)
+    _, _, ll = F(θ, _store = false, _unw = _unw, s = s, _bpf = _bpf)
+    return ll
 end
 
-function ll_grad(θ, F::ParticleFilter; s = 1)
-    Zygote.gradient(θ -> log_likelihood(F, θ, true, s), θ)[1]
+function ll_grad(θ, F::ParticleFilter; s = 1, _bpf = false)
+    Zygote.gradient(θ -> log_likelihood(F, θ, true, s, _bpf), θ)[1]
 end

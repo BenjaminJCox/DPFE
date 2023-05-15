@@ -113,6 +113,6 @@ rvd_t = ReverseDiff.compile(ReverseDiff.GradientTape(testcles, 1. .* collect(-2:
 @btime Zygote.gradient(testcles, collect(-2:200)) seconds = 1
 @btime FiniteDiff.finite_difference_gradient(testcles, 1. .* collect(-2:200)) seconds = 1
 
-t1s = [ones(5) for i in 1:2]
-t2s = [rand(5) for i in 1:2]
-tv = map((i,j) -> i+j, t1s, t2s)
+tfn(ms) = mean(rand(MvNormal(ms[1], ms[2])))
+
+Zygote.gradient(tfn, [[1., 1.], [2. 0.5; 0.5 1.]])
