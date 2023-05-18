@@ -116,3 +116,17 @@ rvd_t = ReverseDiff.compile(ReverseDiff.GradientTape(testcles, 1. .* collect(-2:
 tfn(ms) = mean(rand(MvNormal(ms[1], ms[2])))
 
 Zygote.gradient(tfn, [[1., 1.], [2. 0.5; 0.5 1.]])
+
+function test_if_store(X)
+    y = map(x -> x .^ 2, X)
+    X = y
+    return sum(X)
+end
+
+function test_if_store_G(X)
+    return 2. .* X
+end
+
+t_xv = randn(20)
+fwd_ts = sum(abs.(ForwardDiff.gradient(test_if_store, t_xv) - test_if_store_G(t_xv)))
+zyg_ts = sum(abs.(Zygote.gradient(test_if_store, t_xv)[1] - test_if_store_G(t_xv)))

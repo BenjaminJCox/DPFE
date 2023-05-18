@@ -10,12 +10,12 @@ using ProtoStructs
 using UnPack
 using ChainRulesCore
 
-@proto struct StateSpaceModel
+struct StateSpaceModel
     T::Integer
-    prior
-    state_model
-    obs_model
-    prop_model
+    prior::Function
+    state_model::Function
+    obs_model::Function
+    prop_model::Function
 end
 
 #==
@@ -42,11 +42,11 @@ these functions and structs can be optimised, for example if Σ is fixed then mu
 however, in the MvNormal case it is typically better to use Distributions unless Σ or μ are fixed and known
 ==#
 
-@proto struct ParticleFilter
+struct ParticleFilter
     K::Integer
     SSM::StateSpaceModel
-    obs
-    sample_strat
+    obs::Vector
+    sample_strat::Function
 end
 
 function generate_fake_trajectory(SSM::StateSpaceModel, θ)
@@ -95,48 +95,63 @@ function resample(K, X, w, sample_strategy, _unw = true)
         # new_weight is the important function here, allows us to propagate gradients through resampling
         w_n = map(w -> ω .* new_weight(w ./ ω) ./ K, w_c)
     else
-        w_new = fill(ω / K, K)
+        w_n = fill(ω / K, K)
     end
     return X_n, w_n
 end
 
-function (F::ParticleFilter)(θ; _store = false, _unw = true, s = 1, _bpf = true)
-    @unpack K, SSM, obs, sample_strat = F
-    @unpack T, prior, state_model, obs_model, prop_model = SSM
+# function (F::ParticleFilter)(θ; _store = false, _unw = true, s = 1, _bpf = true)
+#     @unpack K, SSM, obs, sample_strat = F
+#     @unpack T, prior, state_model, obs_model, prop_model = SSM
+#
+#     X = [rand(prior(θ)) for k in 1:K]
+#     w = [inv(K) for k in 1:K]
+#     ω = 1.
+#     ll = 0.0
+#
+#     if _store
+#         Xs = [X]
+#         Ws = [w]
+#     end
+#
+#     for (t, y) in zip(1:T, obs)
+#
+#         X = map(x -> rand(state_model(x, θ)), X)
+#         if _store
+#             ChainRulesCore.ignore_derivatives() do
+#                 push!(Xs, X)
+#             end
+#         end
+#
+#         w = map(x -> pdf(obs_model(x, θ), y), X)
+#         ω = sum(w)
+#         w = w ./ ω
+#
+#         ChainRulesCore.ignore_derivatives() do
+#             @info "PRE Resampling itr $t"
+#             display(summarystats(w))
+#         end
+#
+#         if t % s == 0 #perform resampling every s steps (placeholder)
+#             X, w = resample(K, X, w, sample_strat, _unw)
+#         end
+#         ChainRulesCore.ignore_derivatives() do
+#             @info "POST Resampling itr $t"
+#             display(summarystats(w))
+#         end
+#
+#         ll = ll + log(ω)
+#     end
+#     #if store return path, else return last state, always return weights
+#     if _store
+#         @info "DING"
+#         return Xs, Ws, ll
+#     else
+#         return X, w, ll
+#     end
+# end
 
-    X = [rand(prior(θ)) for k in 1:K]
-    w = [inv(K) for k in 1:K]
-    ω = 1.
-
-    if _store
-        Xs = [X]
-    end
-
-    for (t, y) in zip(1:T, obs)
-        w_o = map(x -> pdf(obs_model(x, θ), y), X)
-        w = w .* w_o
-        ω_o = ω
-        ω = sum(w)
-
-        if 1 < t < T && (t % s == 0) #perform resampling every s steps (placeholder)
-            X, w = resample(K, X, w, sample_strat, _unw)
-        end
-
-        if t < T
-            # bootstrap pf, will update to use modular proposal
-            X = map(x -> rand(state_model(x, θ)), X)
-            if _store
-                ChainRulesCore.ignore_derivatives() do
-                    push!(Xs, X)
-                end
-            end
-        end
-    end
-    #if store return path, else return last state, always return weights
-    return (_store ? Xs : X), w
-end
-
-function (F::ParticleFilter)(θ; _store = false, _unw = true, s = 1, _bpf = false)
+function (F::ParticleFilter)(θ; _store = false, _unw = true)
     @unpack K, SSM, obs, sample_strat = F
     @unpack T, prior, state_model, obs_model, prop_model = SSM
 
@@ -153,27 +168,27 @@ function (F::ParticleFilter)(θ; _store = false, _unw = true, s = 1, _bpf = fals
 
     for (t, y) in zip(1:T, obs)
 
-        # Normalise w_{t-1}
-        w = w ./ sum(w)
-
-        # Resample X_{t-1}
-        # this implicitly sets w to 1/K
-        if (t % s == 0)
-            X, w = resample(K, X, w, sample_strat, _unw)
-        end
-
+        # See SARKAA pg 195-196
         # Sample X_{t}
         X_new = map(x -> rand(prop_model(x, y, θ)), X)
 
         # Compute w_{t}
-        t1 = map(x -> pdf(obs_model(x, θ), y), X)
+        t1 = map(x -> pdf(obs_model(x, θ), y), X_new)
         t2 = map((x, x_new) -> pdf(state_model(x, θ), x_new), X, X_new)
         t3 = map((x, x_new) -> pdf(prop_model(x, y, θ), x_new), X, X_new)
-        w = t1 .* t2 ./ t3
+        w = t1 .* t2 ./ t3 .* w
 
         # Compute \hat{p}(y_{t}|y_{1:t-1})
         ω = sum(w)
 
+        # Accumulate \hat{l}(\theta)
+        # Is technically log(sum(w_t-1 * w_t)), but w_t-1 is now uniform and normalised
+        # see SARKAA PG 196: p(y_{1:T}|θ) ≈ ∏\hat{p}(y_{t}|y_{1:t-1}, θ)
+        # where \hat{p}(y_{k}|y_{1:k-1}, θ) = ∑\bar{w}_{t-1}w_t
+        # if just calculate sum of final weights we do NOT get an estimate of likelihood  p(y_{1:T}|θ) as desired
+        ll = ll + log(ω)
+
+        # As we no longer need the old path we now update and push to storage
         X = X_new
         if _store
             ChainRulesCore.ignore_derivatives() do
@@ -182,9 +197,12 @@ function (F::ParticleFilter)(θ; _store = false, _unw = true, s = 1, _bpf = fals
             end
         end
 
-        # Accumulate \hat{l}(\theta)
-        # Is technically log(sum(w_t-1 * w_t)), but w_t-1 is now uniform and normalised
-        ll = ll + log(ω)
+        # normalise weights for resampling
+        w = w ./ ω
+        # Resample X_{t}
+        # this sets w to 1/K
+        X, w = resample(K, X, w, sample_strat, _unw)
+
     end
     #if store return path, else return last state, always return weights
     if _store
@@ -194,19 +212,47 @@ function (F::ParticleFilter)(θ; _store = false, _unw = true, s = 1, _bpf = fals
     end
 end
 
-function log_likelihood(F::ParticleFilter, θ; _unw = true, s = 1, _bpf = false)
-    _, _, ll = F(θ, _store = false, _unw = _unw, s = s, _bpf = _bpf)
+function log_likelihood(F::ParticleFilter, θ, _unw = true)
+    _, _, ll = F(θ, _store = false, _unw = _unw)
     return ll
 end
 
-function ll_grad(θ, F::ParticleFilter; s = 1, _bpf = false)
-    Zygote.gradient(θ -> log_likelihood(F, θ, true, s, _bpf), θ)[1]
+function energy(F::ParticleFilter, θ, pθ::Distribution, _unw = true)
+    _, _, ll = F(θ, _store = false, _unw = _unw)
+    return logpdf(pθ, θ) .+ ll
 end
 
-function ll_grad_fwd(θ, F::ParticleFilter; s = 1, _bpf = false)
-    ForwardDiff.gradient(θ -> log_likelihood(F, θ, true, s, _bpf), θ)
+#==
+Gradient helpers
+AS THE FUNCTION IS STOCHASTIC THESE GRADIENTS ARE DRAWS FROM THE DISTRIBUTION OF THE GRADIENT AT θ
+ONE MUST BE CAREFUL USING THEM AS NaNs ARE TO BE EXPECTED IF θ IS SENSITIVE:
+E.G IF θ>1 YIELDS UNSTABLE SYSTEM, THEN NEED TO TAKE SMALLER STEPS FOR θ CLOSE TO 1 AS LIKELIHOOD ESTIMATES MAY(WILL) EXPLODE
+REMEMBER IT IS POSSIBLE AND ALLOWABLE TO AVERAGE THESE GRADIENTS OVER MULTIPLE EVALUATIONS OF THE SYSTEM
+if system is derived from differential equation consider performing a stability analysis beforehand
+==#
+
+# log likelihood
+function ll_grad_zyg(θ, F::ParticleFilter)
+    Zygote.gradient(θ -> log_likelihood(F, θ, true), θ)[1]
 end
 
-function ll_grad_fd(θ, F::ParticleFilter; s = 1, _bpf = false)
-    FiniteDiff.finite_difference_gradient(θ -> log_likelihood(F, θ, true, s, _bpf), θ)
+function ll_grad_fwd(θ, F::ParticleFilter)
+    ForwardDiff.gradient(θ -> log_likelihood(F, θ, true), θ)
+end
+
+function ll_hess_fwd(θ, F::ParticleFilter)
+    ForwardDiff.hessian(θ -> log_likelihood(F, θ, true), θ)
+end
+
+# energy (sometimes better)
+function en_grad_zyg(θ, pθ, F::ParticleFilter)
+    Zygote.gradient(θ -> energy(F, θ, pθ, true), θ)[1]
+end
+
+function en_grad_fwd(θ, pθ, F::ParticleFilter)
+    ForwardDiff.gradient(θ -> energy(F, θ, pθ, true), θ)
+end
+
+function en_hess_fwd(θ, pθ, F::ParticleFilter)
+    ForwardDiff.hessian(θ -> energy(F, θ, pθ, true), θ)
 end
