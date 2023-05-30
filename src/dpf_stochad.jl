@@ -53,9 +53,9 @@ function generate_fake_trajectory(SSM::StateSpaceModel, θ)
     @unpack T, prior, state_model, obs_model = SSM
     x = rand(prior(θ))
     y = rand(obs_model(x,θ))
-    xs = [x]
-    ys = [y]
-    for t in 2:T
+    xs = []
+    ys = []
+    for t in 1:T
         x = rand(state_model(x, θ))
         y = rand(obs_model(x, θ))
         push!(xs, x)
