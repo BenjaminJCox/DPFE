@@ -26,7 +26,7 @@ prop_model(x, y, θ) = Normal(f_dyn(x, θ)[1], 2.) # not quite bootstrap pf
 
 T = 500
 
-θ = [0.91, 0.5, 1.0]
+θ = (0.91, 0.5, 1.0)
 #[α, β, σ], parameters and parameterisation from https://www.stats.ox.ac.uk/~doucet/doucet_johansen_tutorialPF2011.pdf
 # note that the parametrisation given in the tutorial is N(μ, σ^2), whereas the parametrisation here is N(μ, σ)
 # this is important for the observation model
@@ -54,10 +54,6 @@ tpfo = test_pf(θ, _store = true)
 
 Random.seed!(1)
 _tgzg = ll_grad_zyg(θ, test_pf)
-Random.seed!(1)
-_tgfw = ll_grad_fwd(θ, test_pf)
-
-@assert _tgzg ≈ _tgfw
 
 msx = [0. for i in 1:T]
 
@@ -86,7 +82,7 @@ pfig
 Random.seed!(11)
 # θ_in = rand(2)/2
 # θ_in = [0.5, 0.2, 0.3]
-θ_in = rand(3)
+θ_in = map(rand, (Float64, Float64, Float64))
 tδ = 2e-5
 
 keca = product_distribution(Beta(3,3), Beta(1.2, 1.2), Normal(0., 2.))
@@ -98,12 +94,12 @@ pθ = keca
 # ll_hess_fwd(θ, test_pf)
 # en_hess_fwd(θ, pθ, test_pf)
 
-llv = ll_grad_fwd(θ_in, test_pf)
+llv = ll_grad_zyg(θ_in, test_pf)
 _nit = 400
-θ_tp = zeros(length(θ_in), _nit)
-θ_tp[:, 1] = θ_in
-_grd_tp = zeros(length(θ_in), _nit)
-_grd_tp[:, 1] = ll_grad_fwd(θ_in, test_pf)
+θ_tp = Vector{Tuple{Float64, Float64, Float64}}(undef, _nit)
+θ_tp[1] = θ_in
+_grd_tp = Vector{Tuple{Float64, Float64, Float64}}(undef, _nit)
+_grd_tp[1] = ll_grad_zyg(θ_in, test_pf)
 _β = 0.2
 _tsb = 75
 _blhd = log_likelihood(test_pf, θ_in)
@@ -113,13 +109,13 @@ for i = 2:_nit
     global _blhd
     if _islb > _tsb
         @info "Reverting to last best, lowering LR"
-        θ_tp[:, i-1] = θ_tp[:, _bindex]
-        _grd_tp[:, i-1] .= _grd_tp[:, _bindex]
+        θ_tp[i-1] = θ_tp[_bindex]
+        _grd_tp[i-1] = _grd_tp[_bindex]
         global _islb = 0
         global tδ *= 0.85
     end
-    _grd = ll_grad_fwd(θ_tp[:, i-1], test_pf)
-    global θ_in_new = θ_tp[:, i-1] + tδ * ((1-_β) .* _grd .+ _β .* _grd_tp[:, i-1])
+    _grd = ll_grad_zyg(θ_tp[i-1], test_pf)
+    global θ_in_new = θ_tp[i-1] .+ tδ .* ((1-_β) .* _grd .+ _β .* _grd_tp[i-1])
     _tlhd = log_likelihood(test_pf, θ_in_new)
     if _tlhd == -Inf
         @warn "Out of bounds, reducing LR"
@@ -136,16 +132,16 @@ for i = 2:_nit
     end
 
     if !any(isnan, θ_in_new)
-        θ_tp[:, i] = θ_in_new
-        _grd_tp[:, i] .= _grd
+        θ_tp[i] = θ_in_new
+        _grd_tp[i] = _grd
     else
         @warn "NaN detected, reverting to a previous iterate"
         if i > 6
-            θ_tp[:, i] = θ_tp[:, i-4]
-            _grd_tp[:, i] .= _grd_tp[:, i-4]
+            θ_tp[i] = θ_tp[:, i-4]
+            _grd_tp[i] = _grd_tp[:, i-4]
         else
-            θ_tp[:, i] = θ_tp[:, i-1]
-            _grd_tp[:, i] .= _grd_tp[:, i-1]
+            θ_tp[i] = θ_tp[i-1]
+            _grd_tp[i] = _grd_tp[i-1]
         end
     end
 end

@@ -4,6 +4,7 @@ using StatsBase
 using Zygote
 using ForwardDiff
 using FiniteDiff
+# using Enzyme
 using Distributions
 using DistributionsAD
 using ProtoStructs
@@ -97,6 +98,16 @@ function resample(K, X, w, sample_strategy, _unw = true)
     else
         w_n = fill(ω / K, K)
     end
+    return X_n, w_n
+end
+
+function soft_resample(K, X, w, sample_strategy; α = 0.5)
+    ω = sum(w)
+    q_k = α .* w .+ (1-α) .* 1/K
+    idx = ChainRulesCore.ignore_derivatives(() -> sample_strategy(q_k, K, ω))
+    X_n = X[idx]
+    w_n = w[idx] ./ q_k[idx]
+    w_n = ω .* w_n ./ sum(w_n)
     return X_n, w_n
 end
 
@@ -201,7 +212,8 @@ function (F::ParticleFilter)(θ; _store = false, _unw = true)
         w = w ./ ω
         # Resample X_{t}
         # this sets w to 1/K
-        X, w = resample(K, X, w, sample_strat, _unw)
+        # X, w = resample(K, X, w, sample_strat, _unw)
+        X, w = soft_resample(K, X, w, sample_strat, α = 0.5)
 
     end
     #if store return path, else return last state, always return weights
@@ -235,6 +247,13 @@ if system is derived from differential equation consider performing a stability 
 function ll_grad_zyg(θ, F::ParticleFilter)
     Zygote.gradient(θ -> log_likelihood(F, θ, true), θ)[1]
 end
+
+# function ll_grad_enz(θ, F::ParticleFilter)
+#     _dθ = zero(θ)
+#     Enzyme.autodiff(Enzyme.Reverse, θ -> log_likelihood(F, θ, true), Active, Duplicated(θ, _dθ))
+#     return _dθ
+# end
+# errors with abstract type integer does not have a definite size, no idea how to fix
 
 function ll_grad_fwd(θ, F::ParticleFilter)
     ForwardDiff.gradient(θ -> log_likelihood(F, θ, true), θ)
