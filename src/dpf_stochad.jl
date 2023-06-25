@@ -184,10 +184,12 @@ function (F::ParticleFilter)(θ; _store = false, _unw = true)
         X_new = map(x -> rand(prop_model(x, y, θ)), X)
 
         # Compute w_{t}
-        t1 = map(x -> pdf(obs_model(x, θ), y), X_new)
-        t2 = map((x, x_new) -> pdf(state_model(x, θ), x_new), X, X_new)
-        t3 = map((x, x_new) -> pdf(prop_model(x, y, θ), x_new), X, X_new)
-        w = t1 .* t2 ./ t3 .* w
+        # slow but very general, does not require to specify logpdf methods every time
+        # anathema to zygote, unfortunate as zygote required for NN training
+        t1 = map(x -> logpdf(obs_model(x, θ), y), X_new)
+        t2 = map((x, x_new) -> logpdf(state_model(x, θ), x_new), X, X_new)
+        t3 = map((x, x_new) -> logpdf(prop_model(x, y, θ), x_new), X, X_new)
+        w = exp.(t1 .+ t2 .- t3) .* w
 
         # Compute \hat{p}(y_{t}|y_{1:t-1})
         ω = sum(w)
@@ -250,7 +252,10 @@ end
 
 # function ll_grad_enz(θ, F::ParticleFilter)
 #     _dθ = zero(θ)
-#     Enzyme.autodiff(Enzyme.Reverse, θ -> log_likelihood(F, θ, true), Active, Duplicated(θ, _dθ))
+#     # Enzyme.autodiff(Enzyme.Reverse, θ -> log_likelihood(F, θ, true), Active, Duplicated(θ, _dθ))
+#     # Enzyme.gradient!(Enzyme.Reverse, _dθ, x -> log_likelihood(F, x, true), θ)
+#     f(p) = log_likelihood(F, p, true)
+#     Enzyme.autodiff(Enzyme.Reverse, f, Active, Duplicated(θ, _dθ))
 #     return _dθ
 # end
 # errors with abstract type integer does not have a definite size, no idea how to fix

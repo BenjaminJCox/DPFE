@@ -57,6 +57,8 @@ _tgzg = ll_grad_zyg(θ, test_pf)
 Random.seed!(1)
 _tgfw = ll_grad_fwd(θ, test_pf)
 
+# _tgen = ll_grad_enz(θ, test_pf)
+
 @assert _tgzg ≈ _tgfw
 
 msx = [zeros(2) for i in 1:T]

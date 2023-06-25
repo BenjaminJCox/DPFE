@@ -53,7 +53,9 @@ Random.seed!(12)
 tpfo = test_pf(θ, _store = true)
 
 Random.seed!(1)
-_tgzg = ll_grad_zyg(θ, test_pf)
+# @profiler for i = 1:10
+    _tgzg = ll_grad_zyg(θ, test_pf)
+# end
 Random.seed!(1)
 _tgfw = ll_grad_fwd(θ, test_pf)
 

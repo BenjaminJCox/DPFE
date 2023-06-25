@@ -7,7 +7,7 @@ using DistributionsAD
 using BenchmarkTools
 using FiniteDiff
 using ReverseDiff
-using StaticArrays
+# using StaticArrays
 using Enzyme
 
 function f(a, b)
@@ -75,16 +75,16 @@ txs, tys = randn(50), rand(50)
 
 ForwardDiff.gradient(tf_comp, vcat(txs, tys))
 Zygote.gradient(tf_comp, vcat(txs, tys))
-Enzyme.gradient(Reverse, tf_comp, vcat(txs, tys))
+Enzyme.gradient(Enzyme.Reverse, tf_comp, vcat(txs, tys))
 rd1 = ReverseDiff.gradient(tf_comp, vcat(txs, tys))
 
 rdtape = ReverseDiff.compile(ReverseDiff.GradientTape(tf_comp, vcat(txs, tys)))
-@btime ReverseDiff.gradient!(rd1, rdtape, vcat(txs, tys)) seconds = 1
-@btime ForwardDiff.gradient(tf_comp, vcat(txs, tys)) seconds = 1
-@btime Zygote.gradient(tf_comp, vcat(txs, tys)) seconds = 1
-@btime FiniteDiff.finite_difference_gradient(tf_comp, vcat(txs, tys)) seconds = 1
-@btime Enzyme.gradient(Reverse, tf_comp, vcat(txs, tys)) seconds = 1
-@btime Enzyme.gradient(Forward, tf_comp, vcat(txs, tys)) seconds = 1
+# @btime ReverseDiff.gradient!(rd1, rdtape, vcat(txs, tys)) seconds = 1
+# @btime ForwardDiff.gradient(tf_comp, vcat(txs, tys)) seconds = 1
+# @btime Zygote.gradient(tf_comp, vcat(txs, tys)) seconds = 1
+# @btime FiniteDiff.finite_difference_gradient(tf_comp, vcat(txs, tys)) seconds = 1
+# @btime Enzyme.gradient(Reverse, tf_comp, vcat(txs, tys)) seconds = 1
+# @btime Enzyme.gradient(Forward, tf_comp, vcat(txs, tys)) seconds = 1
 
 npdf(mu, sig, x) = inv(sig * sqrt(2π)) * exp(-0.5 * ((x - mu)/sig)^2)
 
@@ -104,14 +104,14 @@ testcles(collect(-2:3))
 
 fwd = ForwardDiff.gradient(testcles, collect(-2:200))
 zgd = Zygote.gradient(testcles, collect(-2:200))[1]
-fid = FiniteDiff.finite_difference_gradient(testcles, 1. .* collect(-2:200))
+# fid = FiniteDiff.finite_difference_gradient(testcles, 1. .* collect(-2:200))
 rvd = ReverseDiff.gradient(testcles, 1. .* collect(-2:200))
 rvd_t = ReverseDiff.compile(ReverseDiff.GradientTape(testcles, 1. .* collect(-2:200)))
 
-@btime ReverseDiff.gradient!(rvd, rvd_t, collect(-2:200)) seconds = 1
-@btime ForwardDiff.gradient(testcles, collect(-2:200)) seconds = 1
-@btime Zygote.gradient(testcles, collect(-2:200)) seconds = 1
-@btime FiniteDiff.finite_difference_gradient(testcles, 1. .* collect(-2:200)) seconds = 1
+# @btime ReverseDiff.gradient!(rvd, rvd_t, collect(-2:200)) seconds = 1
+# @btime ForwardDiff.gradient(testcles, collect(-2:200)) seconds = 1
+# @btime Zygote.gradient(testcles, collect(-2:200)) seconds = 1
+# @btime FiniteDiff.finite_difference_gradient(testcles, 1. .* collect(-2:200)) seconds = 1
 
 tfn(ms) = mean(rand(MvNormal(ms[1], ms[2])))
 
@@ -156,7 +156,73 @@ _dx = zero(t_theta_pack)
 
 zyg_dict = Zygote.gradient(θ -> test_dense_layer_dict(θ, t_x), t_theta)
 fwd_pack = ForwardDiff.gradient(θ -> test_dense_layer_unpack(θ, t_x, (25, 5)), t_theta_pack)
-enz_pack = Enzyme.autodiff(Reverse, θ -> test_dense_layer_unpack(θ, t_x, (25, 5)), Active, Duplicated(_x, _dx))
+enz_pack = Enzyme.autodiff(Enzyme.Reverse, θ -> test_dense_layer_unpack(θ, t_x, (25, 5)), Active, Duplicated(_x, _dx))
 
-@btime Zygote.gradient(θ -> test_dense_layer_dict(θ, t_x), t_theta)
-@btime ForwardDiff.gradient(θ -> test_dense_layer_unpack(θ, t_x, (25, 5)), t_theta_pack)
+# @btime Zygote.gradient(θ -> test_dense_layer_dict(θ, t_x), t_theta)
+# @btime ForwardDiff.gradient(θ -> test_dense_layer_unpack(θ, t_x, (25, 5)), t_theta_pack)
+
+function _mvnlpdf(x, μ, Σ)
+    vals, vecs = eigen(Σ)
+    logdet = sum(log.(vals))
+    dim = length(vals)
+    log2pi = log(2 * π)
+    dev = x - μ
+    rtvalsinv = sqrt.(inv.(vals))
+    U = vecs * diagm(rtvalsinv)
+    maha = dev' * U
+    sqmaha = maha * maha'
+    return -0.5 * (dim * log2pi + sqmaha + logdet)
+end
+
+function naive_mvnlpdf(x, μ, Σ)
+    dim = length(μ)
+    log2pi = log(2.0 * π)
+    logd = logdet(Σ)
+    dev = x - μ
+    sqma = dev' * inv(Σ) * dev
+    return -0.5 * (dim * log2pi + sqma + logd)
+end
+
+
+x = rand(2)
+μ = rand(2)
+Σ = [1. -0.2; -0.2 1.3]
+
+naive_mvnlpdf(x, μ, Σ) - logpdf(MvNormal(μ, Σ), x)
+
+function test_logpdf(X)
+    _l = 0.0
+    z = zero(X[1, :])
+    C = collect(1.0 .* I(length(z)))
+    for i in 1:size(X, 1)
+        # _l = _l + naive_mvnlpdf(z, X[i, :], C)
+         _l = _l + logpdf(MvNormal(X[i, :], C), z)
+    end
+    return _l
+end
+
+ntx = 2.0 .* randn(20, 4)
+dntx = zero(ntx)
+
+tv = test_logpdf(ntx)
+
+zyg_lmf = Zygote.gradient(θ -> test_logpdf(θ), ntx)[1]
+fwd_lmf = ForwardDiff.gradient(θ -> test_logpdf(θ), ntx)
+# enz_lmf = Enzyme.gradient(Enzyme.Reverse, θ -> test_logpdf(θ), ntx)
+# enz_lmf = Enzyme.autodiff(Enzyme.Reverse, test_logpdf, Active, Duplicated(ntx, dntx))
+# rvd_lmf_t = ReverseDiff.compile(ReverseDiff.GradientTape(test_logpdf, ntx))
+# rvd_lmf = zero(ntx)
+# ReverseDiff.gradient!(rvd_lmf, rvd_lmf_t, ntx)
+# ReverseDiff.gradient(test_logpdf, ntx)
+
+
+try
+    enz_lmf = Enzyme.gradient(Enzyme.Reverse, θ -> test_logpdf(θ), ntx)
+catch e
+    io = IOBuffer()
+    showerror(io, e)
+    # global emsg = sprint((io,v) -> show(io, "text/plain", v), stacktrace(catch_backtrace()))
+    global emsg = String(take!(io))
+    write("error.txt", emsg)
+end
+# enz_lmf = Enzyme.autodiff(Enzyme.Reverse, θ -> test_logpdf(θ), Active, Active(ntx))
