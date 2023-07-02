@@ -213,7 +213,6 @@ function (F::ParticleFilter)(θ; _store = false, _unw = true)
         # normalise weights for resampling
         w = w ./ ω
         # Resample X_{t}
-        # this sets w to 1/K
         # X, w = resample(K, X, w, sample_strat, _unw)
         X, w = soft_resample(K, X, w, sample_strat, α = 0.5)
 
