@@ -29,15 +29,28 @@ test_packed = pack_known([m1, m2, m3], [b1, b2, b3])
 
 test_ep_x = evaluate_pack(test_x, test_packed..., afs)
 
-_empty = generate_empty_pack(test_packed[2], test_packed[3])
+_empty = generate_empty_pack(test_packed[2], test_packed[3])[1]
 _empty += rand(length(_empty))
 
 sum(abs.(test_ep_x - test_fx))
 
 loss(x, y) = sqrt(mean((x .- y).^2))
 
-gr_fw = ForwardDiff.gradient(θ -> loss(evaluate_pack(test_x, θ, test_packed[2], test_packed[3], afs), test_fx), test_packed[1] .+ 0.01)
+# gr_fw = ForwardDiff.gradient(θ -> loss(evaluate_pack(test_x, θ, test_packed[2], test_packed[3], afs), test_fx), test_packed[1] .+ 0.01)
 gr_zy = Zygote.gradient(θ -> loss(evaluate_pack(test_x, θ, test_packed[2], test_packed[3], afs), test_fx), _empty)[1]
+
+
+prop_fn, test_θ, pt = init_learnable_proposal(10, 10, 5)
+test_θ .+= rand(length(test_θ))./10
+x = randn(10)
+xn = x .+ (randn(10) ./ 10)
+y = randn(10)
+
+get_lp(p) = logpdf(prop_fn(x, y, p), xn)
+
+tv = get_lp(test_θ)
+
+gr_zy_pk = Zygote.gradient(θ -> get_lp(θ), test_θ)[1]
 
 # opt_me = copy(_empty)
 #

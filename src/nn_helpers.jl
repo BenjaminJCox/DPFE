@@ -54,7 +54,7 @@ function pack_known(matrices, biases)
     pack_tuple = Tuple(pack_vector)
     display(pack_tuple)
     display(has_bias)
-    parameter_vector = generate_empty_pack(pack_tuple, has_bias)
+    parameter_vector = generate_empty_pack(pack_tuple, has_bias)[1]
     layer_start_idx = 1
     for layer in 1:n_layers
         input = pack_tuple[layer]
@@ -92,37 +92,41 @@ end
 
 rl(x) = max.(x, 0.0)
 
-function MVNM_unpack(x, y, pack, num_comps, isotropic = true)
+function MVNM_unpack(x, y, pack, num_comps, activations, isotropic = true)
     _input = vcat(x, y)
     state_dim = length(x)
-    n_fns = length(pack[1]) - 1
-    activations = Vector{Function}(undef, n_fns)
-    # activations .= [identity for fn in 1:n_fns]
-    activations[begin:end-1] .= rl
-    activations[end] = identity
+    n_fns = length(pack[2]) - 1
+    # activations = Vector{Function}(undef, n_fns)
+    # ignore_derivatives() do
+    #     # activations .= [identity for fn in 1:n_fns]
+    #     activations[begin:end-1] .= rl
+    #     activations[end] = identity
+    #     @info length(activations)
+    # end
     _output = evaluate_pack(_input, pack..., activations)
 
-    means = []
-    cov_scales = []
+    # means = []
+    # cov_scales = []
     cov_idx_start = state_dim*num_comps
-    for comp in 1:num_comps
-        crm = _output[(comp-1)*state_dim+1:comp*state_dim]
-        push!(means, crm)
-        csc = _output[cov_idx_start+comp]
-        push!(cov_scales, csc)
-    end
+    # for comp in 1:num_comps
+    #     crm = _output[(comp-1)*state_dim+1:comp*state_dim]
+    #     push!(means, crm)
+    #     csc = _output[cov_idx_start+comp]
+    #     push!(cov_scales, csc)
+    # end
+    #
+    # mm_vector = []
+    # for comp in 1:num_comps
+    #     push!(mm_vector, MvNormal(means[comp], cov_scales[comp] .* collect(I(state_dim))))
+    # end
+    mm_vector = [TuringDenseMvNormal(_output[(comp-1)*state_dim+1:comp*state_dim], _output[cov_idx_start+comp] .* collect(I(state_dim))) for comp in 1:num_comps]
 
-    mm_vector = []
-    for comp in 1:num_comps
-        push!(mm_vector, MvNormal(means[comp], cov_scales[comp] .* collect(I(state_dim))))
-    end
-
-    result_model = MixtureModel(MvNormal[mm_vector...])
+    result_model = MixtureModel(TuringDenseMvNormal[mm_vector...])
     return result_model
 end
 
-function init_learnable_proposal(state_dim, obs_dim, num_comps, isotropic = true; layers = [128, 256], bias = [true, true, true, true])
+function init_learnable_proposal(state_dim, obs_dim, num_comps, isotropic = true; layers = [128, 256], bias = [true, true, true, true], activations = [rl, rl, identity])
     _θ, pack_tuple, bias_tuple = MVNM_pack(state_dim, obs_dim, num_comps, isotropic; layers = layers, bias = bias)
-    _prop(x, y, θ) = MVNM_unpack(x, y, (θ, pack_tuple, bias_tuple), num_comps, isotropic)
-    return _prop, _θ
+    _prop(x, y, θ) = MVNM_unpack(x, y, (θ, pack_tuple, bias_tuple), num_comps, activations, isotropic)
+    return _prop, _θ, pack_tuple
 end
