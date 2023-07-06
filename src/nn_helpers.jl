@@ -1,4 +1,5 @@
 using Distributions
+using DistributionsAD
 using LinearAlgebra
 
 function evaluate_pack(X, packed, pack_tuple, has_bias, activations)

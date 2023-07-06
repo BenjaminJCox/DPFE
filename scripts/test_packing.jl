@@ -48,6 +48,8 @@ y = randn(10)
 
 get_lp(p) = logpdf(prop_fn(x, y, p), xn)
 get_rand(p) = rand(components(prop_fn(x, y, p))[rand(1:5)])
+
+# get_rand(p) = rand(prop_fn(x, y, p))
 # gives stack overflow
 
 tv = get_lp(test_θ)
@@ -56,8 +58,9 @@ trn = get_rand(test_θ)
 gr_zy_mvn = Zygote.gradient(θ -> get_lp(θ), test_θ)[1]
 gr_zy_rnd = Zygote.gradient(θ -> mean(get_rand(θ)), test_θ)[1]
 
-test_mm = MixtureModel([TuringDenseMvNormal(randn(10), collect(I(10))) for comp in 1:1])
-rand(test_mm)
+# test_mm = MixtureModel([TuringDenseMvNormal(randn(10), collect(I(10))) for comp in 1:1])
+# rand(test_mm)
+# MWE for overflow
 
 # opt_me = copy(_empty)
 #
